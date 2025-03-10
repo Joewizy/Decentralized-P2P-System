@@ -22,7 +22,7 @@ module defihub::rewards {
         creator: address,
     }
     
-    public entry fun mint_reward_nft(name: vector<u8>, description: vector<u8>, url: vector<u8>, ctx: &mut TxContext) {
+    public entry fun mint_reward_nft(_: &Admin, name: vector<u8>, description: vector<u8>, url: vector<u8>, ctx: &mut TxContext) {
         let sender = ctx.sender();
         let nft = LearnNft {
             id: object::new(ctx),
