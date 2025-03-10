@@ -178,6 +178,7 @@ module defihub::devcard {
             // delete the DevCard of the user who called the function
             object::delete(id);
         }
+        
         //Finally you will create a public function which will return the card information based on the given id.
         public fun get_card_info(devhub: &DevHub, id: u64): &DevCard {
             object_table::borrow(&devhub.cards, id)
