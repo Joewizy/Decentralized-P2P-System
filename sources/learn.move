@@ -16,12 +16,14 @@ module defihub::rewards {
         url: Url,
     }
 
+    // Events
     public struct NftMinted has copy, drop {
         id: ID,
         name: String,
         creator: address,
     }
     
+    // TODO: Whitelist function for users to able to mint nft after course completion
     public entry fun mint_reward_nft(_: &Admin, name: vector<u8>, description: vector<u8>, url: vector<u8>, ctx: &mut TxContext) {
         let sender = ctx.sender();
         let nft = LearnNft {

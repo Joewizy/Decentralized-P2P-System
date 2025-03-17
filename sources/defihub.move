@@ -17,6 +17,12 @@ module defihub::devcard {
     const MIN_CARD_COST: u64 = 2;
 
     // STRUCTS [OBJECTS] OF THE NFT
+    public struct Trader has key {
+        id: UID,
+        completion: u64,
+        offer: u64
+    }
+    
     public struct DevCard has key, store {
         id: UID,
         name: String,
