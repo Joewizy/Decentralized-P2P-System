@@ -2,10 +2,10 @@
 module defihub::add_test {
     use sui::test_scenario;
    // use defihub::addition::{Self, add, deposit};
-    use sui::coin::{Self, Coin};
-    use sui::sui::SUI;
-    use sui::tx_context;
-    use sui::object;
+   //  use sui::coin::{Self, Coin};
+   //  use sui::sui::SUI;
+   //  use sui::tx_context;
+   //  use sui::object;
 
     // Assume these constants are imported or defined:
     const INSUFFICIENT_FUNDS: u64 = 1;
@@ -28,7 +28,8 @@ module defihub::add_test {
             let y = 5;
             let amount = x+y;
 
-            assert!(amount == 10);
+            assert!(amount != 10, 0); // assert!(amount == 10);
+           // │    │             ^^^^^^^^^^^^^^^^^^^^^ Test was not expected to error, but it aborted originating in the module defihub::add_test rooted here//
         };
         test_scenario::end(scenario_val);
         

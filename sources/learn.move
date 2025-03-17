@@ -1,7 +1,7 @@
 module defihub::rewards {
     use std::string::{Self, String};
-    use sui::transfer;
-    use sui::tx_context::{Self, TxContext};
+    // use sui::transfer; unnecesary it is available as a prelude
+    // use sui::tx_context::{Self, TxContext}; unnecesary
     use sui::url::{Self, Url};
     use sui::event;
 

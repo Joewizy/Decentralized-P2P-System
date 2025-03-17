@@ -1,8 +1,9 @@
 module defihub::dex {
-    use sui::coin::{Coin, value};
-    use sui::transfer;
-    use sui::object::{Self, UID};
-    use sui::tx_context::{TxContext};
+    use sui::coin::{Coin}; // i remove the unused value of **value here
+    // use sui::transfer;  ths is not necesary as it is available by default assert!(amount == 10);
+    // │    │             ^^^^^^^^^^^^^^^^^^^^^ Test was not expected to error, but it aborted originating in the module defihub::add_test rooted here
+    // use sui::object::{Self, UID};
+    // use sui::tx_context::{TxContext};
 
     /// A liquidity pool for swapping between two coin types.
     public struct LiquidityPool<phantom T1, phantom T2> has key {
