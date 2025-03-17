@@ -1,11 +1,11 @@
 module defihub::devcard {
     use std::string::{Self, String};
-    use std::option::{Self, Option};
+    // use std::option::{Self, Option};  ^^^^ Unnecessary alias 'option' for module 'std::option'. This alias is provided by default
 
     use sui::object_table::{Self, ObjectTable};
-    use sui::transfer;
-    use sui::object::{Self, UID, ID};
-    use sui::tx_context::{Self, TxContext};
+    // use sui::transfer; Unnecessary alias 'transfer' for module 'sui::transfer'. This alias is provided by default
+    // use sui::object::{Self, UID, ID}; ^^^ Unnecessary alias 'UID' for module member 'sui::object::UID'. This alias is provided by default
+    // use sui::tx_context::{Self, TxContext}; ^^^^ Unnecessary alias 'tx_context' for module 'sui::tx_context'. This alias is provided by default
     use sui::url::{Self, Url};
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
@@ -17,6 +17,7 @@ module defihub::devcard {
     const MIN_CARD_COST: u64 = 2;
 
     // STRUCTS [OBJECTS] OF THE NFT
+    #[allow(unused_field)]
     public struct Trader has key {
         id: UID,
         completion: u64,
