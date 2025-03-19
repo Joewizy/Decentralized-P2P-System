@@ -95,7 +95,7 @@ module defihub::devcard {
 
             devhub.counter = devhub.counter + 1;
 
-            let id = object::new(ctx);
+            let id = object::new(ctx); //UID
 
             event::emit({
                 CardCreated {
