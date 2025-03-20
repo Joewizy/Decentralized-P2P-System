@@ -6,8 +6,8 @@ module defihub::escrow_test{
 #[test]
 fun test_create() {
     let owner = @0xA;
-    let user1 = @0xB;
-    let user2 = @0xC;
+    let buyer = @0xB;
+    let seller = @0xC;
 
     // Begin test scenario with the owner as the sender.
     let mut scenario_val = test_scenario::begin(owner);
