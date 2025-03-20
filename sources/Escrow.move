@@ -7,6 +7,7 @@ module defihub::Escrow {
     use sui::event;
     use sui::sui::SUI;
     use std::string::{Self, String};
+    use sui::table::{Self, Table};
 
     // ======== ERRORS ========
     const E_NOT_OWNER: u64 = 0;
@@ -14,11 +15,19 @@ module defihub::Escrow {
     const E_NOT_BUYER: u64 = 5;
     const E_INVALID_STATE: u64 = 3;
     const E_INVALID_AMOUNT: u64 = 6;
+    const E_ALREADY_EXISTS: u64 = 7;
 
     // ======== STRUCTURES ========
+    public struct ProfileRegistry has key {
+        id: UID,
+        profiles: Table<address, bool>,
+    }
+
     public struct UserProfile has key, store {
         id: UID,
         name: String,
+        contact: String,
+        email: String,
         owner: address,
         joined_date: u64,
         total_trades: u64,
@@ -42,6 +51,9 @@ module defihub::Escrow {
         owner: address,
         currency_code: String,
         locked_amount: Balance<SUI>,
+        active_escrows: u64,
+        price: u64,
+        payment_type: String, 
     }
 
     // ======== EVENTS ========
@@ -57,13 +69,32 @@ module defihub::Escrow {
         confirmed_by: address,
     }
 
+    // ====== INITIALIZATION ======
+    fun init(ctx: &mut TxContext) {
+            let registry = ProfileRegistry {
+            id: object::new(ctx),
+            profiles: table::new<address, bool>(ctx),
+        };
+        transfer::share_object(registry);
+    }
+
     // ======== FUNCTIONS ========
-    public entry fun create_user_profile(name: vector<u8>, ctx: &mut TxContext) {
+    public entry fun create_user_profile(
+        name: vector<u8>,
+        contact: vector<u8>,
+        email: vector<u8>,
+        registry: &mut ProfileRegistry,
+        ctx: &mut TxContext
+    ) {
         let sender = tx_context::sender(ctx);
+        assert!(!table::contains(&registry.profiles, sender), E_ALREADY_EXISTS);
+        table::add(&mut registry.profiles, sender, true);
         let id = object::new(ctx);
         let user_profile = UserProfile {
             id,
             name: string::utf8(name),
+            contact: string::utf8(contact),
+            email: string::utf8(email),
             owner: sender,
             joined_date: tx_context::epoch_timestamp_ms(ctx),
             total_trades: 0,
@@ -71,13 +102,15 @@ module defihub::Escrow {
             completed_trades: 0,
             average_settlement_time: 0,
         };
-
         transfer::transfer(user_profile, sender);
     }
 
     public entry fun create_offer(
-        sui_coin: Coin<SUI>,
         currency_code: vector<u8>,
+        price: u64,
+        payment_type: vector<u8>,
+        sui_coin: Coin<SUI>,
+        _: &UserProfile,
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
@@ -87,22 +120,25 @@ module defihub::Escrow {
             locked_amount: locked_balance,
             owner: sender,
             currency_code: string::utf8(currency_code),
+            active_escrows: 0,
+            price,
+            payment_type: string::utf8(payment_type),
         };
-
         transfer::share_object(offer);
     }
 
     public entry fun create_escrow(
-        offer: &mut Offer,
         sui_to_buy: u64,
-        fiat_amount: u64,
+        offer: &mut Offer,
         ctx: &mut TxContext
     ) {
         let buyer = tx_context::sender(ctx);
         let total_sui = balance::value(&offer.locked_amount);
+        let fiat_amount = offer.price * sui_to_buy;
 
         assert!(sui_to_buy > 0 && sui_to_buy <= total_sui, E_INVALID_AMOUNT);
         let escrow_sui = balance::split(&mut offer.locked_amount, sui_to_buy);
+        offer.active_escrows = offer.active_escrows + 1;
 
         let escrow = Escrow {
             id: object::new(ctx),
@@ -125,8 +161,9 @@ module defihub::Escrow {
     }
 
     public entry fun confirm_payment(
-        escrow: &mut Escrow,
         user_profile: &mut UserProfile,
+        escrow: &mut Escrow,
+        offer: &mut Offer,
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
@@ -134,16 +171,14 @@ module defihub::Escrow {
         assert!(user_profile.owner == sender, E_NOT_OWNER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
 
-        // Split the entire locked_coin for payout
         let total = balance::value(&escrow.locked_coin);
         let payout_balance = balance::split(&mut escrow.locked_coin, total);
         let payout_coin = coin::from_balance(payout_balance, ctx);
         transfer::public_transfer(payout_coin, escrow.buyer);
 
-        // Update escrow status
         escrow.status = string::utf8(b"COMPLETED");
+        offer.active_escrows = offer.active_escrows - 1;
 
-        // Update user profile stats
         user_profile.completed_trades = user_profile.completed_trades + 1;
         let settlement_time = tx_context::epoch_timestamp_ms(ctx) - escrow.created_at;
         let total_time = user_profile.average_settlement_time * (user_profile.completed_trades - 1);
@@ -165,13 +200,29 @@ module defihub::Escrow {
         assert!(escrow.buyer == sender, E_NOT_BUYER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
 
-        // Split the entire locked_coin back to offer
         let total = balance::value(&escrow.locked_coin);
         let to_return = balance::split(&mut escrow.locked_coin, total);
         balance::join(&mut offer.locked_amount, to_return);
-
-        // Update escrow status
         escrow.status = string::utf8(b"CANCELLED");
+        offer.active_escrows = offer.active_escrows - 1;
+    }
+
+    public entry fun delete_offer(offer: Offer, ctx: &mut TxContext) {
+        let sender = tx_context::sender(ctx);
+
+        assert!(offer.owner == sender, E_NOT_OWNER);
+        assert!(offer.active_escrows == 0, E_INVALID_STATE);
+
+        let Offer { id, locked_amount, owner: _, currency_code: _, active_escrows: _, price: _, payment_type: _ ,} = offer;
+
+        if (balance::value(&locked_amount) > 0) {
+            let coin_to_return = coin::from_balance(locked_amount, ctx);
+            transfer::public_transfer(coin_to_return, sender);
+        } else {
+            balance::destroy_zero(locked_amount);
+        };
+
+        object::delete(id);
     }
 
     public entry fun make_dispute(
