@@ -15,7 +15,6 @@ fun test_create() {
 
         test_scenario::next_tx(scenario, owner);
         {   
-            create_user_profile(b"Furies", scenario.ctx());
         };
         test_scenario::end(scenario_val);
         

@@ -21,15 +21,14 @@ module defihub::Escrow {
     // ======== STRUCTURES ========
     public struct ProfileRegistry has key {
         id: UID,
-        profiles: Table<address, bool>,
+        user_profiles: Table<address, UserProfile>
     }
 
     public struct Deployer has key, store {
         id: UID,
     }
 
-    public struct UserProfile has key, store {
-        id: UID,
+    public struct UserProfile has store {
         name: String,
         contact: String,
         email: String,
@@ -81,12 +80,18 @@ module defihub::Escrow {
         buyer: address,
     }
 
+    public struct PaymentConfirmedDuringDispute has copy, drop {
+        escrow_id: ID,
+        seller: address,
+    }
+
     // ======== Initialization ========
     fun init(ctx: &mut TxContext) {
         let registry = ProfileRegistry {
             id: object::new(ctx),
-            profiles: table::new<address, bool>(ctx),
+            user_profiles: table::new<address, UserProfile>(ctx),
         };
+
         transfer::share_object(registry);
 
         let deployer = Deployer {
@@ -105,13 +110,9 @@ module defihub::Escrow {
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
-        assert!(!table::contains(&registry.profiles, sender), E_ALREADY_EXISTS);
+        assert!(!table::contains(&registry.user_profiles, sender), E_ALREADY_EXISTS);
 
-        table::add(&mut registry.profiles, sender, true);
-
-        let id = object::new(ctx);
         let user_profile = UserProfile {
-            id,
             name: string::utf8(name),
             contact: string::utf8(contact),
             email: string::utf8(email),
@@ -122,7 +123,8 @@ module defihub::Escrow {
             completed_trades: 0,
             average_settlement_time: 0,
         };
-        transfer::transfer(user_profile, sender);
+
+        table::add(&mut registry.user_profiles, sender, user_profile);
     }
 
     public entry fun create_offer(
@@ -130,7 +132,7 @@ module defihub::Escrow {
         price: u64,
         payment_type: vector<u8>,
         sui_coin: Coin<SUI>,
-        _: &UserProfile,
+        _: &ProfileRegistry,
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
@@ -184,16 +186,18 @@ module defihub::Escrow {
     }
 
     public entry fun confirm_payment(
-        user_profile: &mut UserProfile,
+        user_profile: &mut ProfileRegistry,
         escrow: &mut Escrow,
         offer: &mut Offer,
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
         assert!(escrow.seller == sender, E_NOT_SELLER);
-        assert!(user_profile.owner == sender, E_NOT_OWNER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
         assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
+
+        let user_registry = table::borrow_mut(&mut user_profile.user_profiles, sender);
+        assert!(user_registry.owner == sender, E_NOT_OWNER);
 
         let total = balance::value(&escrow.locked_coin);
         let payout_balance = balance::split(&mut escrow.locked_coin, total);
@@ -204,11 +208,11 @@ module defihub::Escrow {
         escrow.status = string::utf8(b"COMPLETED");
         offer.active_escrows = offer.active_escrows - 1;
 
-        user_profile.completed_trades = user_profile.completed_trades + 1;
+        user_registry.completed_trades = user_registry.completed_trades + 1;
         let settlement_time = tx_context::epoch_timestamp_ms(ctx) - escrow.created_at;
-        let total_time = user_profile.average_settlement_time * (user_profile.completed_trades - 1);
-        user_profile.average_settlement_time =
-            (total_time + settlement_time) / user_profile.completed_trades;
+        let total_time = user_registry.average_settlement_time * (user_registry.completed_trades - 1);
+        user_registry.average_settlement_time =
+            (total_time + settlement_time) / user_registry.completed_trades;
 
         event::emit(PaymentConfirmed {
             escrow_id: object::uid_to_inner(&escrow.id),
@@ -255,16 +259,17 @@ module defihub::Escrow {
 
     public entry fun make_dispute(
         escrow: &mut Escrow,
-        user_profile: &mut UserProfile,
+        user_profile: &mut ProfileRegistry,
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
 
-        assert!(user_profile.owner == sender, E_NOT_OWNER);
+        let user_registry = table::borrow_mut(&mut user_profile.user_profiles, sender);
+        assert!(user_registry.owner == sender, E_NOT_OWNER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
 
         escrow.status = string::utf8(b"DISPUTE");
-        user_profile.disputes = user_profile.disputes + 1;
+        user_registry.disputes = user_registry.disputes + 1;
 
         event::emit(DisputeRaised {
             escrow_id: object::uid_to_inner(&escrow.id),
@@ -273,65 +278,61 @@ module defihub::Escrow {
         });
     }
 
-    public entry fun resolve_dispute(
+    public entry fun force_complete_trade(
         _: &Deployer,
         escrow: &mut Escrow,
+        offer: &mut Offer,
+        profile_registry: &mut ProfileRegistry,
         ctx: &mut TxContext
     ) {
-
+        let sender = tx_context::sender(ctx);
         assert!(escrow.status == string::utf8(b"DISPUTE"), E_INVALID_STATE);
+        assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
 
-        escrow.status = string::utf8(b"PENDING");
+        let total = balance::value(&escrow.locked_coin);
+        let payout_balance = balance::split(&mut escrow.locked_coin, total);
+        let payout_coin = coin::from_balance(payout_balance, ctx);
+
+        transfer::public_transfer(payout_coin, escrow.buyer);
+
+        escrow.status = string::utf8(b"COMPLETED");
+        offer.active_escrows = offer.active_escrows - 1;
+
+        let seller_profile = table::borrow_mut(&mut profile_registry.user_profiles, escrow.seller);
+        seller_profile.completed_trades = seller_profile.completed_trades + 1;
+        let settlement_time = tx_context::epoch_timestamp_ms(ctx) - escrow.created_at;
+        let total_time = seller_profile.average_settlement_time * (seller_profile.completed_trades - 1);
+        seller_profile.average_settlement_time = (total_time + settlement_time) / seller_profile.completed_trades;
+
     }
 
-        //TODO: Make UserInfo a sharedObject?
-    // public entry fun force_complete_trade(
-    //     deployer: Deployer,
-    //     escrow: &mut Escrow,
-    //     offer: &mut Offer,
-    //     user_profile: &mut UserProfile,
-    //     ctx: &mut TxContext
-    // ) {
-    //     let sender = tx_context::sender(ctx);
-    //     assert!(escrow.status == string::utf8(b"DISPUTE"), E_INVALID_STATE);
-    //     assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
+    public entry fun refund_seller(
+        _: &Deployer,
+        escrow: &mut Escrow,
+        offer: &mut Offer,
+        ctx: &mut TxContext
+    ) {
+        let sender = tx_context::sender(ctx);
+        assert!(escrow.status == string::utf8(b"DISPUTE"), E_INVALID_STATE);
+        assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
 
-    //     // Release funds to buyer
-    //     let total = balance::value(&escrow.locked_coin);
-    //     let payout_balance = balance::split(&mut escrow.locked_coin, total);
-    //     let payout_coin = coin::from_balance(payout_balance, ctx);
-    //     transfer::public_transfer(payout_coin, escrow.buyer);
+        let total = balance::value(&escrow.locked_coin);
+        let to_return = balance::split(&mut escrow.locked_coin, total);
+        balance::join(&mut offer.locked_amount, to_return);
 
-    //     escrow.status = string::utf8(b"COMPLETED");
-    //     offer.active_escrows = offer.active_escrows - 1;
+        escrow.status = string::utf8(b"CANCELLED");
+        offer.active_escrows = offer.active_escrows - 1;
+    }
 
-    //     // Update user profile
-    //     user_profile.completed_trades = user_profile.completed_trades + 1;
-    //     let settlement_time = tx_context::epoch_timestamp_ms(ctx) - escrow.created_at;
-    //     let total_time = user_profile.average_settlement_time * (user_profile.completed_trades - 1);
-    //     user_profile.average_settlement_time =
-    //         (total_time + settlement_time) / user_profile.completed_trades;
+    public entry fun resolve_dispute(escrow: &mut Escrow, ctx: &mut TxContext) {
+        let sender = tx_context::sender(ctx);
 
-    //     transfer::transfer(deployer, sender);
-    // }
+        assert!(escrow.seller == sender, E_NOT_SELLER);
+        assert!(escrow.status == string::utf8(b"DISPUTE"), E_INVALID_STATE);
 
-    // public entry fun refund_seller(
-    //     deployer: Deployer,
-    //     escrow: &mut Escrow,
-    //     offer: &mut Offer,
-    //     ctx: &mut TxContext
-    // ) {
-    //     let sender = tx_context::sender(ctx);
-    //     assert!(escrow.status == string::utf8(b"DISPUTE"), E_INVALID_STATE);
-    //     assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
-
-    //     // Return funds to offer
-    //     let total = balance::value(&escrow.locked_coin);
-    //     let to_return = balance::split(&mut escrow.locked_coin, total);
-    //     balance::join(&mut offer.locked_amount, to_return);
-    //     escrow.status = string::utf8(b"CANCELLED");
-    //     offer.active_escrows = offer.active_escrows - 1;
-
-    //     transfer::transfer(deployer, sender);
-    // }
+        event::emit(PaymentConfirmedDuringDispute {
+            escrow_id: object::uid_to_inner(&escrow.id),
+            seller: sender,
+        });
+    }
 }
