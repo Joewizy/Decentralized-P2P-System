@@ -23,6 +23,10 @@ module defihub::Escrow {
         profiles: Table<address, bool>,
     }
 
+    public struct Deployer has key, store {
+        id: UID,
+    }
+
     public struct UserProfile has key, store {
         id: UID,
         name: String,
@@ -69,13 +73,26 @@ module defihub::Escrow {
         confirmed_by: address,
     }
 
+    public struct DisputeRaised has copy, drop {
+        escrow_id: ID,
+        seller: address,
+        buyer: address,
+    }
+
     // ====== INITIALIZATION ======
     fun init(ctx: &mut TxContext) {
-            let registry = ProfileRegistry {
+        // Create and share the ProfileRegistry
+        let registry = ProfileRegistry {
             id: object::new(ctx),
             profiles: table::new<address, bool>(ctx),
         };
         transfer::share_object(registry);
+
+        let deployer = Deployer {
+            id: object::new(ctx)
+        };
+        let publisher = tx_context::sender(ctx);
+        transfer::transfer(deployer, publisher);
     }
 
     // ======== FUNCTIONS ========
@@ -110,7 +127,6 @@ module defihub::Escrow {
         price: u64,
         payment_type: vector<u8>,
         sui_coin: Coin<SUI>,
-        _: &UserProfile,
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
@@ -213,7 +229,7 @@ module defihub::Escrow {
         assert!(offer.owner == sender, E_NOT_OWNER);
         assert!(offer.active_escrows == 0, E_INVALID_STATE);
 
-        let Offer { id, locked_amount, owner: _, currency_code: _, active_escrows: _, price: _, payment_type: _ ,} = offer;
+        let Offer { id, locked_amount, owner: _, currency_code: _, active_escrows: _, price: _, payment_type: _ } = offer;
 
         if (balance::value(&locked_amount) > 0) {
             let coin_to_return = coin::from_balance(locked_amount, ctx);
@@ -234,9 +250,17 @@ module defihub::Escrow {
         assert!(escrow.seller == sender, E_NOT_SELLER);
         assert!(user_profile.owner == sender, E_NOT_OWNER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
+
         user_profile.disputes = user_profile.disputes + 1;
+        
+        event::emit(DisputeRaised {
+            escrow_id: object::uid_to_inner(&escrow.id),
+            seller: escrow.seller,
+            buyer: escrow.buyer,
+        });
     }
 
+    // TODO: resolve_dispute to release funds to buyer
     public entry fun resolve_dispute(
         escrow: &mut Escrow,
         user_profile: &mut UserProfile,
@@ -247,5 +271,21 @@ module defihub::Escrow {
         assert!(user_profile.owner == sender, E_NOT_OWNER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
         escrow.status = string::utf8(b"COMPLETED");
+    }
+
+    public entry fun refund_seller(
+        _: &Deployer,
+        escrow: &mut Escrow,
+        offer: &mut Offer,
+        ctx: &mut TxContext
+    ) {
+        let sender = tx_context::sender(ctx);
+        assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
+
+        let total = balance::value(&escrow.locked_coin);
+        let to_return = balance::split(&mut escrow.locked_coin, total);
+        balance::join(&mut offer.locked_amount, to_return);
+        escrow.status = string::utf8(b"CANCELLED");
+        offer.active_escrows = offer.active_escrows - 1;
     }
 }
