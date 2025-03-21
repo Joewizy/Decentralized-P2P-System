@@ -10,12 +10,13 @@ module defihub::Escrow {
     use sui::table::{Self, Table};
 
     // ======== ERRORS ========
-    const E_NOT_OWNER: u64 = 0;
-    const E_NOT_SELLER: u64 = 4;
-    const E_NOT_BUYER: u64 = 5;
-    const E_INVALID_STATE: u64 = 3;
-    const E_INVALID_AMOUNT: u64 = 6;
-    const E_ALREADY_EXISTS: u64 = 7;
+    const E_NOT_OWNER: u64 = 1;
+    const E_NOT_SELLER: u64 = 2;
+    const E_NOT_BUYER: u64 = 3;
+    const E_INVALID_STATE: u64 = 4;
+    const E_INVALID_AMOUNT: u64 = 5;
+    const E_ALREADY_EXISTS: u64 = 6;
+    const E_INVALID_OFFER: u64 = 7;
 
     // ======== STRUCTURES ========
     public struct ProfileRegistry has key {
@@ -42,11 +43,12 @@ module defihub::Escrow {
 
     public struct Escrow has key, store {
         id: UID,
+        offer_id: ID,
         seller: address,
         buyer: address,
         locked_coin: Balance<SUI>,
         fiat_amount: u64,
-        status: String, // "PENDING" // "COMPLETED" // "CANCELLED"
+        status: String, // "PENDING" // "DISPUTE" // "COMPLETED" // "CANCELLED"
         created_at: u64,
     }
 
@@ -57,7 +59,7 @@ module defihub::Escrow {
         locked_amount: Balance<SUI>,
         active_escrows: u64,
         price: u64,
-        payment_type: String, 
+        payment_type: String,
     }
 
     // ======== EVENTS ========
@@ -79,9 +81,8 @@ module defihub::Escrow {
         buyer: address,
     }
 
-    // ====== INITIALIZATION ======
+    // ======== Initialization ========
     fun init(ctx: &mut TxContext) {
-        // Create and share the ProfileRegistry
         let registry = ProfileRegistry {
             id: object::new(ctx),
             profiles: table::new<address, bool>(ctx),
@@ -105,7 +106,9 @@ module defihub::Escrow {
     ) {
         let sender = tx_context::sender(ctx);
         assert!(!table::contains(&registry.profiles, sender), E_ALREADY_EXISTS);
+
         table::add(&mut registry.profiles, sender, true);
+
         let id = object::new(ctx);
         let user_profile = UserProfile {
             id,
@@ -127,10 +130,13 @@ module defihub::Escrow {
         price: u64,
         payment_type: vector<u8>,
         sui_coin: Coin<SUI>,
+        _: &UserProfile,
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
+
         let locked_balance = coin::into_balance(sui_coin);
+
         let offer = Offer {
             id: object::new(ctx),
             locked_amount: locked_balance,
@@ -158,6 +164,7 @@ module defihub::Escrow {
 
         let escrow = Escrow {
             id: object::new(ctx),
+            offer_id: object::uid_to_inner(&offer.id),
             seller: offer.owner,
             buyer,
             locked_coin: escrow_sui,
@@ -186,10 +193,12 @@ module defihub::Escrow {
         assert!(escrow.seller == sender, E_NOT_SELLER);
         assert!(user_profile.owner == sender, E_NOT_OWNER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
+        assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
 
         let total = balance::value(&escrow.locked_coin);
         let payout_balance = balance::split(&mut escrow.locked_coin, total);
         let payout_coin = coin::from_balance(payout_balance, ctx);
+
         transfer::public_transfer(payout_coin, escrow.buyer);
 
         escrow.status = string::utf8(b"COMPLETED");
@@ -213,12 +222,15 @@ module defihub::Escrow {
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
+
         assert!(escrow.buyer == sender, E_NOT_BUYER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
+        assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
 
         let total = balance::value(&escrow.locked_coin);
         let to_return = balance::split(&mut escrow.locked_coin, total);
         balance::join(&mut offer.locked_amount, to_return);
+
         escrow.status = string::utf8(b"CANCELLED");
         offer.active_escrows = offer.active_escrows - 1;
     }
@@ -247,12 +259,13 @@ module defihub::Escrow {
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
-        assert!(escrow.seller == sender, E_NOT_SELLER);
+
         assert!(user_profile.owner == sender, E_NOT_OWNER);
         assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
 
+        escrow.status = string::utf8(b"DISPUTE");
         user_profile.disputes = user_profile.disputes + 1;
-        
+
         event::emit(DisputeRaised {
             escrow_id: object::uid_to_inner(&escrow.id),
             seller: escrow.seller,
@@ -260,32 +273,65 @@ module defihub::Escrow {
         });
     }
 
-    // TODO: resolve_dispute to release funds to buyer
     public entry fun resolve_dispute(
-        escrow: &mut Escrow,
-        user_profile: &mut UserProfile,
-        ctx: &mut TxContext
-    ) {
-        let sender = tx_context::sender(ctx);
-        assert!(escrow.seller == sender, E_NOT_SELLER);
-        assert!(user_profile.owner == sender, E_NOT_OWNER);
-        assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
-        escrow.status = string::utf8(b"COMPLETED");
-    }
-
-    public entry fun refund_seller(
         _: &Deployer,
         escrow: &mut Escrow,
-        offer: &mut Offer,
         ctx: &mut TxContext
     ) {
-        let sender = tx_context::sender(ctx);
-        assert!(escrow.status == string::utf8(b"PENDING"), E_INVALID_STATE);
 
-        let total = balance::value(&escrow.locked_coin);
-        let to_return = balance::split(&mut escrow.locked_coin, total);
-        balance::join(&mut offer.locked_amount, to_return);
-        escrow.status = string::utf8(b"CANCELLED");
-        offer.active_escrows = offer.active_escrows - 1;
+        assert!(escrow.status == string::utf8(b"DISPUTE"), E_INVALID_STATE);
+
+        escrow.status = string::utf8(b"PENDING");
     }
+
+        //TODO: Make UserInfo a sharedObject?
+    // public entry fun force_complete_trade(
+    //     deployer: Deployer,
+    //     escrow: &mut Escrow,
+    //     offer: &mut Offer,
+    //     user_profile: &mut UserProfile,
+    //     ctx: &mut TxContext
+    // ) {
+    //     let sender = tx_context::sender(ctx);
+    //     assert!(escrow.status == string::utf8(b"DISPUTE"), E_INVALID_STATE);
+    //     assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
+
+    //     // Release funds to buyer
+    //     let total = balance::value(&escrow.locked_coin);
+    //     let payout_balance = balance::split(&mut escrow.locked_coin, total);
+    //     let payout_coin = coin::from_balance(payout_balance, ctx);
+    //     transfer::public_transfer(payout_coin, escrow.buyer);
+
+    //     escrow.status = string::utf8(b"COMPLETED");
+    //     offer.active_escrows = offer.active_escrows - 1;
+
+    //     // Update user profile
+    //     user_profile.completed_trades = user_profile.completed_trades + 1;
+    //     let settlement_time = tx_context::epoch_timestamp_ms(ctx) - escrow.created_at;
+    //     let total_time = user_profile.average_settlement_time * (user_profile.completed_trades - 1);
+    //     user_profile.average_settlement_time =
+    //         (total_time + settlement_time) / user_profile.completed_trades;
+
+    //     transfer::transfer(deployer, sender);
+    // }
+
+    // public entry fun refund_seller(
+    //     deployer: Deployer,
+    //     escrow: &mut Escrow,
+    //     offer: &mut Offer,
+    //     ctx: &mut TxContext
+    // ) {
+    //     let sender = tx_context::sender(ctx);
+    //     assert!(escrow.status == string::utf8(b"DISPUTE"), E_INVALID_STATE);
+    //     assert!(object::uid_to_inner(&offer.id) == escrow.offer_id, E_INVALID_OFFER);
+
+    //     // Return funds to offer
+    //     let total = balance::value(&escrow.locked_coin);
+    //     let to_return = balance::split(&mut escrow.locked_coin, total);
+    //     balance::join(&mut offer.locked_amount, to_return);
+    //     escrow.status = string::utf8(b"CANCELLED");
+    //     offer.active_escrows = offer.active_escrows - 1;
+
+    //     transfer::transfer(deployer, sender);
+    // }
 }
