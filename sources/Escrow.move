@@ -29,6 +29,11 @@ module defihub::Escrow {
         user_offers: Table<address, vector<ID>>
     }
 
+    public struct EscrowRegistry has key {
+        id: UID,
+        user_escrows: Table<address, vector<ID>>,
+    }
+
     public struct Deployer has key, store {
         id: UID,
     }
@@ -96,14 +101,25 @@ module defihub::Escrow {
 
     // ======== Initialization ========
     fun init(ctx: &mut TxContext) {
-        let registry = ProfileRegistry {
+        let profile_registry = ProfileRegistry {
             id: object::new(ctx),
             user_profiles: table::new<address, UserProfile>(ctx),
         };
+        transfer::share_object(profile_registry);
 
-        transfer::share_object(registry);
+        let offer_registry = OfferRegistry {
+            id: object::new(ctx),
+            user_offers: table::new<address, vector<ID>>(ctx),
+        };
+        transfer::share_object(offer_registry);
 
-        let deployer = Deployer {
+        let escrow_registry = EscrowRegistry {
+            id: object::new(ctx),
+            user_escrows: table::new<address, vector<ID>>(ctx),
+        };
+        transfer::share_object(escrow_registry);
+
+        let deployer = Deployer { // AI which would be the owner
             id: object::new(ctx)
         };
         let publisher = tx_context::sender(ctx);
@@ -170,6 +186,7 @@ module defihub::Escrow {
     public entry fun create_escrow(
         sui_to_buy: u64,
         offer: &mut Offer,
+        escrow_registry: &mut EscrowRegistry,
         ctx: &mut TxContext
     ) {
         let buyer = tx_context::sender(ctx);
@@ -191,12 +208,26 @@ module defihub::Escrow {
             created_at: tx_context::epoch_timestamp_ms(ctx),
         };
 
+        let escrow_id = object::uid_to_inner(&escrow.id);
+        // Add to buyer's escrows
+        if (!table::contains(&escrow_registry.user_escrows, buyer)) {
+            table::add(&mut escrow_registry.user_escrows, buyer, vector::empty<ID>());
+        };
+        let buyer_escrows = table::borrow_mut(&mut escrow_registry.user_escrows, buyer);
+        vector::push_back(buyer_escrows, escrow_id);
+        // Add to seller's escrows
+        if (!table::contains(&escrow_registry.user_escrows, offer.owner)) {
+            table::add(&mut escrow_registry.user_escrows, offer.owner, vector::empty<ID>());
+        };
+        let seller_escrows = table::borrow_mut(&mut escrow_registry.user_escrows, offer.owner);
+        vector::push_back(seller_escrows, escrow_id);
+
         event::emit(EscrowCreated {
-            escrow_id: object::uid_to_inner(&escrow.id),
+            escrow_id,
             offer_id: object::uid_to_inner(&offer.id),
             seller: offer.owner,
             buyer,
-            locked_coin: balance::value(&offer.locked_amount),
+            locked_coin: balance::value(&escrow.locked_coin),
             fiat_amount,
             status: string::utf8(b"PENDING"),
             created_at: tx_context::epoch_timestamp_ms(ctx),
