@@ -24,6 +24,11 @@ module defihub::Escrow {
         user_profiles: Table<address, UserProfile>
     }
 
+    public struct OfferRegistry has key {
+        id: UID,
+        user_offers: Table<address, vector<ID>>
+    }
+
     public struct Deployer has key, store {
         id: UID,
     }
@@ -64,9 +69,13 @@ module defihub::Escrow {
     // ======== EVENTS ========
     public struct EscrowCreated has copy, drop {
         escrow_id: ID,
+        offer_id: ID,
         seller: address,
         buyer: address,
-        amount: u64,
+        locked_coin: u64,
+        fiat_amount: u64,
+        status: String, 
+        created_at: u64,
     }
 
     public struct PaymentConfirmed has copy, drop {
@@ -132,11 +141,11 @@ module defihub::Escrow {
         price: u64,
         payment_type: vector<u8>,
         sui_coin: Coin<SUI>,
+        offer_registry: &mut OfferRegistry,
         _: &ProfileRegistry,
         ctx: &mut TxContext
     ) {
         let sender = tx_context::sender(ctx);
-
         let locked_balance = coin::into_balance(sui_coin);
 
         let offer = Offer {
@@ -148,7 +157,14 @@ module defihub::Escrow {
             price,
             payment_type: string::utf8(payment_type),
         };
+        let offer_id = object::uid_to_inner(&offer.id);
         transfer::share_object(offer);
+
+        if (!table::contains(&offer_registry.user_offers, sender)) {
+            table::add(&mut offer_registry.user_offers, sender, vector::empty<ID>());
+        };
+        let user_offers = table::borrow_mut(&mut offer_registry.user_offers, sender);
+        vector::push_back(user_offers, offer_id);
     }
 
     public entry fun create_escrow(
@@ -177,9 +193,13 @@ module defihub::Escrow {
 
         event::emit(EscrowCreated {
             escrow_id: object::uid_to_inner(&escrow.id),
+            offer_id: object::uid_to_inner(&offer.id),
             seller: offer.owner,
             buyer,
-            amount: sui_to_buy,
+            locked_coin: balance::value(&offer.locked_amount),
+            fiat_amount,
+            status: string::utf8(b"PENDING"),
+            created_at: tx_context::epoch_timestamp_ms(ctx),
         });
 
         transfer::share_object(escrow);
@@ -239,11 +259,30 @@ module defihub::Escrow {
         offer.active_escrows = offer.active_escrows - 1;
     }
 
-    public entry fun delete_offer(offer: Offer, ctx: &mut TxContext) {
+    public entry fun delete_offer(
+        offer: Offer,
+        offer_registry: &mut OfferRegistry,
+        ctx: &mut TxContext
+    ) {
         let sender = tx_context::sender(ctx);
 
         assert!(offer.owner == sender, E_NOT_OWNER);
         assert!(offer.active_escrows == 0, E_INVALID_STATE);
+
+        let offer_id = object::uid_to_inner(&offer.id);
+
+        if (table::contains(&offer_registry.user_offers, sender)) {
+            let user_offers = table::borrow_mut(&mut offer_registry.user_offers, sender);
+            let len = vector::length(user_offers);
+            let mut i = 0;
+            while (i < len) {
+                if (*vector::borrow(user_offers, i) == offer_id) {
+                    vector::remove(user_offers, i);
+                    break;
+                };
+                i = i + 1;
+            };
+        };
 
         let Offer { id, locked_amount, owner: _, currency_code: _, active_escrows: _, price: _, payment_type: _ } = offer;
 
