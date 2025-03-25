@@ -1,22 +1,22 @@
-#[test_only]
-module defihub::escrow_test{
+// #[test_only]
+module defihub::escrow_test {
     use sui::test_scenario;
-    use defihub::Escrow::{create_escrow, create_user_profile, confirm_payment};
+    use defihub::Escrow::{init_for_testing, ProfileRegistry, is_user_profiles_empty};
 
-#[test]
-fun test_create() {
-    let owner = @0xA;
-    let buyer = @0xB;
-    let seller = @0xC;
+    #[test]
+    fun test_create() {
+        let owner = @0xA;
 
-    // Begin test scenario with the owner as the sender.
-    let mut scenario_val = test_scenario::begin(owner);
-        let scenario = &mut scenario_val;
-
-        test_scenario::next_tx(scenario, owner);
+        let mut scenario = test_scenario::begin(owner);
         {   
+            init_for_testing(scenario.ctx());
         };
-        test_scenario::end(scenario_val);
-        
-}
+        scenario.next_tx(owner);
+        {
+            let profile_registry = test_scenario::take_shared<ProfileRegistry>(&scenario);
+            assert!(is_user_profiles_empty(&profile_registry));
+            test_scenario::return_shared(profile_registry);
+        };
+        scenario.end();
+    }
 }

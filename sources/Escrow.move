@@ -405,4 +405,18 @@ module defihub::Escrow {
             seller: sender,
         });
     }
+
+    // ======== GETTER FUNCTIONS ========
+    public fun get_offer_price(self: &Offer): u64 {
+        self.price
+    }
+
+    #[test_only]
+    public fun init_for_testing(ctx: &mut TxContext) {
+        init(ctx);
+    } 
+
+    public fun is_user_profiles_empty(registry: &ProfileRegistry): bool {
+        table::is_empty(&registry.user_profiles)
+    }
 }
