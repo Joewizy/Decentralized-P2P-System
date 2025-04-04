@@ -410,13 +410,64 @@ module defihub::Escrow {
     public fun get_offer_price(self: &Offer): u64 {
         self.price
     }
+    
+    // ======== TEST ONLY FUNCTIONS ========
+    #[test_only]
+    public fun is_user_profiles_empty(registry: &ProfileRegistry): bool {
+        table::is_empty(&registry.user_profiles)
+    }
+
+    #[test_only]
+    public fun is_user_offers_empty(registry: &OfferRegistry): bool {
+        table::is_empty(&registry.user_offers)
+    }
+
+    #[test_only]
+    public fun is_user_escrows_empty(registry: &EscrowRegistry): bool {
+        table::is_empty(&registry.user_escrows)
+    }
+
+    #[test_only]
+    public fun get_user_profile_details(registry: &ProfileRegistry, user: address): (
+        String, String, String, address, u64, u64, u64, u64, u64
+    ) {
+        let profile = table::borrow(&registry.user_profiles, user);
+        (
+            profile.name,
+            profile.contact,
+            profile.email,
+            profile.owner,
+            profile.joined_date,
+            profile.total_trades,
+            profile.disputes,
+            profile.completed_trades,
+            profile.average_settlement_time
+        )
+    }
+
+    // #[test_only]
+    // public fun get_offer_details(offer: &Offer): (
+    //     ID, address, String, Balance<SUI>, u64, u64, String
+    // ) {
+    //     (
+    //         offer.id,
+    //         offer.owner,
+    //         offer.currency_code,
+    //         offer.locked_amount,
+    //         offer.active_escrows,
+    //         offer.price,
+    //         offer.payment_type,
+    //     )
+    // }
+
+    #[test_only]
+    public fun get_offers_details(offer: &Offer): &Offer {
+        offer
+    }
 
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
         init(ctx);
     } 
-
-    public fun is_user_profiles_empty(registry: &ProfileRegistry): bool {
-        table::is_empty(&registry.user_profiles)
-    }
 }
+
