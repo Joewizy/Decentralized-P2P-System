@@ -187,13 +187,16 @@ module defihub::Escrow {
         sui_to_buy: u64,
         offer: &mut Offer,
         escrow_registry: &mut EscrowRegistry,
+        profile_registry: &mut ProfileRegistry,
         ctx: &mut TxContext
     ) {
         let buyer = tx_context::sender(ctx);
         let total_sui = balance::value(&offer.locked_amount);
         let fiat_amount = offer.price * sui_to_buy;
 
+        assert!(table::contains(&profile_registry.user_profiles, buyer), E_ALREADY_EXISTS); 
         assert!(sui_to_buy > 0 && sui_to_buy <= total_sui, E_INVALID_AMOUNT);
+        
         let escrow_sui = balance::split(&mut offer.locked_amount, sui_to_buy);
         offer.active_escrows = offer.active_escrows + 1;
 
@@ -208,13 +211,21 @@ module defihub::Escrow {
             created_at: tx_context::epoch_timestamp_ms(ctx),
         };
 
+        let buyer_profile = table::borrow_mut(&mut profile_registry.user_profiles, buyer);
+        buyer_profile.total_trades = buyer_profile.total_trades + 1;
+
+        let seller_profile = table::borrow_mut(&mut profile_registry.user_profiles, offer.owner);
+        seller_profile.total_trades = seller_profile.total_trades + 1;
+
         let escrow_id = object::uid_to_inner(&escrow.id);
+
         // Add to buyer's escrows
         if (!table::contains(&escrow_registry.user_escrows, buyer)) {
             table::add(&mut escrow_registry.user_escrows, buyer, vector::empty<ID>());
         };
         let buyer_escrows = table::borrow_mut(&mut escrow_registry.user_escrows, buyer);
         vector::push_back(buyer_escrows, escrow_id);
+
         // Add to seller's escrows
         if (!table::contains(&escrow_registry.user_escrows, offer.owner)) {
             table::add(&mut escrow_registry.user_escrows, offer.owner, vector::empty<ID>());
@@ -445,24 +456,33 @@ module defihub::Escrow {
         )
     }
 
-    // #[test_only]
-    // public fun get_offer_details(offer: &Offer): (
-    //     ID, address, String, Balance<SUI>, u64, u64, String
-    // ) {
-    //     (
-    //         offer.id,
-    //         offer.owner,
-    //         offer.currency_code,
-    //         offer.locked_amount,
-    //         offer.active_escrows,
-    //         offer.price,
-    //         offer.payment_type,
-    //     )
-    // }
+    #[test_only]
+    public fun get_offer_details(offer: &Offer): (&UID, address, &String, &Balance<SUI>, u64, u64, &String) {
+        (
+            &offer.id,
+            offer.owner,
+            &offer.currency_code,
+            &offer.locked_amount,
+            offer.active_escrows,
+            offer.price,
+            &offer.payment_type,
+        )
+    }
+
 
     #[test_only]
-    public fun get_offers_details(offer: &Offer): &Offer {
-        offer
+    public fun get_escrow_details(escrow: &Escrow): (&UID, &ID, &address, &address, &Balance<SUI>, &u64, &String, &u64 ) {
+        (
+            &escrow.id,
+            &escrow.offer_id,
+            &escrow.seller,
+            &escrow.buyer,
+            &escrow.locked_coin,
+            &escrow.fiat_amount,
+            &escrow.status,
+            &escrow.created_at
+        )
+       
     }
 
     #[test_only]
