@@ -17,6 +17,7 @@ module defihub::Escrow {
     const E_INVALID_AMOUNT: u64 = 5;
     const E_ALREADY_EXISTS: u64 = 6;
     const E_INVALID_OFFER: u64 = 7;
+    const E_NO_USER_PROFILE: u64 = 8;
 
     // ======== STRUCTURES ========
     public struct ProfileRegistry has key {
@@ -194,7 +195,7 @@ module defihub::Escrow {
         let total_sui = balance::value(&offer.locked_amount);
         let fiat_amount = offer.price * sui_to_buy;
 
-        assert!(table::contains(&profile_registry.user_profiles, buyer), E_ALREADY_EXISTS); 
+        assert!(table::contains(&profile_registry.user_profiles, buyer), E_NO_USER_PROFILE); 
         assert!(sui_to_buy > 0 && sui_to_buy <= total_sui, E_INVALID_AMOUNT);
         
         let escrow_sui = balance::split(&mut offer.locked_amount, sui_to_buy);
@@ -436,6 +437,12 @@ module defihub::Escrow {
     #[test_only]
     public fun is_user_escrows_empty(registry: &EscrowRegistry): bool {
         table::is_empty(&registry.user_escrows)
+    }
+
+    #[test_only]
+    public fun is_user_offers_empty_for_address(registry: &OfferRegistry, user: address ): bool {
+        !table::contains(&registry.user_offers, user) || 
+        vector::is_empty(table::borrow(&registry.user_offers, user))
     }
 
     #[test_only]
