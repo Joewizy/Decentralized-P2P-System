@@ -18,6 +18,7 @@ module defihub::Escrow {
     const E_ALREADY_EXISTS: u64 = 6;
     const E_INVALID_OFFER: u64 = 7;
     const E_NO_USER_PROFILE: u64 = 8;
+   const E_CANNOT_BUY_OWN_OFFER: u64 = 9;
 
     // ======== STRUCTURES ========
     public struct ProfileRegistry has key {
@@ -195,6 +196,7 @@ module defihub::Escrow {
         let total_sui = balance::value(&offer.locked_amount);
         let fiat_amount = offer.price * sui_to_buy;
 
+        assert!(buyer != offer.owner, E_CANNOT_BUY_OWN_OFFER);
         assert!(table::contains(&profile_registry.user_profiles, buyer), E_NO_USER_PROFILE); 
         assert!(sui_to_buy > 0 && sui_to_buy <= total_sui, E_INVALID_AMOUNT);
         

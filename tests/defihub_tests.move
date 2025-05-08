@@ -11,6 +11,7 @@ module defihub::escrow_test {
     use sui::test_scenario;
     use sui::test_utils;
     use sui::clock::{Self, Clock};
+    use defihub::Escrow::E_CANNOT_BUY_OWN_OFFER;
 
     #[test]
     fun test_all_shared_objects_are_created() {
@@ -827,7 +828,7 @@ module defihub::escrow_test {
             test_scenario::return_shared(profile_registry);
         };
 
-        scenario.next_tx(user);
+        scenario.next_tx(owner);
         {
             let mut coin = coin::mint_for_testing<SUI>(1000, scenario.ctx());
             let price = 1000;
@@ -842,6 +843,60 @@ module defihub::escrow_test {
             test_scenario::return_shared(offer_registry);
         };
 
+        scenario.next_tx(user);
+        {
+            let mut offer = scenario.take_shared<Escrow::Offer>();
+            let mut profile_registry = scenario.take_shared<Escrow::ProfileRegistry>();
+            let mut escrow_registry = scenario.take_shared<Escrow::EscrowRegistry>();
+
+            let sui_to_buy = 100;
+            Escrow::create_escrow(sui_to_buy, &mut offer, &mut escrow_registry, &mut profile_registry, scenario.ctx());
+
+            test_scenario::return_shared(offer);
+            test_scenario::return_shared(escrow_registry);
+            test_scenario::return_shared(profile_registry);
+        };
+        scenario.end();
+    }
+
+     #[test, expected_failure(abort_code = Escrow::E_CANNOT_BUY_OWN_OFFER)]
+    fun test_cannot_buy_own_offer() {
+        let owner = @0xCA;
+        let user = @0x12;
+
+        let mut scenario = test_scenario::begin(owner);
+
+        scenario.next_tx(owner);
+        {   
+            Escrow::init_for_testing(scenario.ctx());
+        };
+
+        scenario.next_tx(user);
+        {
+            let name: vector<u8> = b"Joe";
+            let contact: vector<u8> = b"12345";
+            let email: vector<u8> = b"test@gmail.com";
+
+            let mut profile_registry = scenario.take_shared<Escrow::ProfileRegistry>();
+            Escrow::create_user_profile(name, contact, email, &mut profile_registry, scenario.ctx());
+            test_scenario::return_shared(profile_registry);
+        };
+        // user creates an offer
+        scenario.next_tx(user);
+        {
+            let mut coin = coin::mint_for_testing<SUI>(1000, scenario.ctx());
+            let price = 1000;
+            let currency_code: vector<u8> = b"Joe";
+            let payment_type: vector<u8> = b"BankTransfer";
+
+            let profile_registry = scenario.take_shared<Escrow::ProfileRegistry>();
+            let mut offer_registry = scenario.take_shared<Escrow::OfferRegistry>();
+
+            Escrow::create_offer(currency_code, price, payment_type, coin, &mut offer_registry, &profile_registry, scenario.ctx());
+            test_scenario::return_shared(profile_registry);
+            test_scenario::return_shared(offer_registry);
+        };
+        // user try to buy his offer
         scenario.next_tx(user);
         {
             let mut offer = scenario.take_shared<Escrow::Offer>();
